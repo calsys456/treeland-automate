@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+
+INPUT_DELAY="${INPUT_DELAY:=0.3}"
+LOCK_DELAY="${LOCK_DELAY:=1}"
+UNLOCK_DELAY="${UNLOCK_DELAY:=4}"
+CHECK_LOG_DELAY="${CHECK_LOG_DELAY:=0.5}"
+
+USER1="${USER1:=april}"
+PASSWORD1="${PASSWORD1:=1}"
+
+USER2="${USER2:=may}"
+PASSWORD2="${PASSWORD2:=2}"
+
+now() {
+    date +%T
+}
+
+# check_journal $1=starttime $2=pattern [$3=service=treeland]
+check_journal() {
+    grep -q "$2" <<< $(journalctl -u "${3:-treeland}" --no-pager --since $1) || return 1
+}
+
+keys() {
+    ydotool key "$@" &> /dev/null
+    sleep $INPUT_DELAY
+}
+
+insert() {
+    ydotool type "$@" &> /dev/null
+    sleep $INPUT_DELAY
+}
+
+moveto() {
+    # We don't know why but ydotool will move the mouse to the
+    # coordinates that is exactly twice as large as of the given...
+    ydotool mousemove --absolute -x $(( $1 / 2 )) -y $(( $2 / 2 )) &> /dev/null
+    sleep $INPUT_DELAY
+}
+
+leftclick() {
+    ydotool click 0xC0 &> /dev/null
+    sleep $INPUT_DELAY
+}
+
+rightclick() {
+    ydotool click 0xC1 &> /dev/null
+    sleep $INPUT_DELAY
+}
+
+leftclickat() {
+    moveto $1 $2
+    leftclick
+}
+
+rightclickat() {
+    moveto $1 $2
+    rightclick
+}
+
+cleanup() {
+    # start ydotoold
+    if [ $(whoami) != "root" ]; then
+        echo "This script must be run as root"
+        exit 1
+    fi
+
+    if ! command -v ydotool &> /dev/null; then
+        echo "ydotool could not be found. Please install ydotool first."
+        exit 1
+    fi
+
+    if ! pgrep ydotoold &> /dev/null; then
+        echo "ydotoold is not running. Starting ydotoold"
+        ydotoold &> /dev/null & disown
+        sleep 1
+    fi
+    
+    echo "Cleaning up"
+    # terminate all sessions at seat0
+    loginctl | awk '{if ($1+0 == $1 && /seat0/) { print $1 | "xargs sudo loginctl terminate-session" }}'
+    # stop ddm service
+    systemctl stop ddm
+    # kill ddm & treeland
+    pkill ddm || true; pkill treeland || true
+    # set logging rules
+    systemctl set-environment QT_LOGGING_RULES='treeland.*.*=true'
+    # adapt services change if any
+    systemctl daemon-reload
+}
+
+restartddm() {
+    echo "Restarting ddm service"
+    systemctl restart ddm
+    sleep $LOCK_DELAY
+}
+
+# _testPerformAuth $1=testName $2=username $3=password $4=userPositionX $5=userPositionY $6=logString
+_testPerformAuth() {
+    echo "Test $1"
+    # user list button
+    leftclickat 1821 1034
+    # user position
+    leftclickat $4 $5
+    # password input field
+    leftclickat 1149 635
+    # enter password
+    insert $3
+    # save current time
+    local starttime=$(now)
+    # login button
+    leftclickat 1295 635
+    # check log
+    sleep $CHECK_LOG_DELAY
+    check_journal $starttime "$6" || { echo "Test $1 failed!"; exit 1; }
+    echo "Test $1 probably succeed. Check the display."
+    sleep $UNLOCK_DELAY
+}
+
+_testLoginUser1() {
+    _testPerformAuth "Login user 1" $USER1 $PASSWORD1 1816 931 "New session added: id="
+}
+
+_testLoginUser2() {
+    _testPerformAuth "Login user 2" $USER2 $PASSWORD2 1816 977 "New session added: id="
+}
+
+_testUnlockUser1() {
+    _testPerformAuth "Unlock user 1" $USER1 $PASSWORD1 1816 931 "Unlock signal received for session id:"
+}
+
+_testUnlockUser2() {
+    _testPerformAuth "Unlock user 2" $USER2 $PASSWORD2 1816 977 "Unlock signal received for session id:"
+}
+
+_testLock() {
+    # This should be call when a user is logged in
+    echo "Test Lock"
+    # save current time
+    local starttime=$(now)
+    # Meta + L
+    keys 125:1 38:1 38:0 125:0
+    # check log
+    sleep $CHECK_LOG_DELAY
+    check_journal $starttime "Lock signal received for session id:" || { echo "Test Lock failed!"; exit 1; }
+    echo "Test Lock probably succeed. Check the display."
+    sleep $LOCK_DELAY
+}
+
+_testLogout() {
+    # This should be call when a user is logged in
+    echo "Test Logout"
+    # Ctrl + Alt + Del
+    keys 29:1 56:1 111:1 111:0 56:0 29:0
+    sleep $LOCK_DELAY
+    # save current time
+    local starttime=$(now)
+    # logout button
+    leftclickat 1559 477
+    # check log
+    sleep $CHECK_LOG_DELAY
+    check_journal $starttime "Session removed: id=" || { echo "Test Logout failed!"; exit 1; }
+    echo "Test Logout probably succeed. Check the display."
+}
+
+# _testSwitchToUser1 [$1=action=[login|unlock]]
+_testSwitchToUser1() {
+    # This should be call when a user is logged in
+    echo "Test Switch to user 1"
+    # Ctrl + Alt + Del
+    keys 29:1 56:1 111:1 111:0 56:0 29:0
+    sleep $LOCK_DELAY
+    # save current time
+    local starttime=$(now)
+    # switch user button
+    leftclickat 1359 477
+    # check log
+    sleep $CHECK_LOG_DELAY
+    check_journal $starttime "Lock signal received for session id:" || { echo "Test Switch to user 1 failed at pressing switch user button!"; exit 1; }
+    sleep $LOCK_DELAY
+    # user 1 position
+    leftclickat 1816 931
+    # password input field
+    leftclickat 1149 635
+    # enter password
+    insert $PASSWORD1
+    # save current time
+    local starttime=$(now)
+    # login button
+    leftclickat 1295 635
+    # check log
+    sleep $CHECK_LOG_DELAY
+    if [ "$1" = "unlock" ]; then
+        check_journal $starttime "Unlock signal received for session id:" || { echo "Test Switch to user 1 failed at unlocking user 1!"; exit 1; }
+    else
+        check_journal $starttime "New session added: id=" || { echo "Test Switch to user 1 failed at loggin in user 1!"; exit 1; }
+    fi
+    echo "Test Switch to user 1 probably succeed. Check the display."
+    sleep $UNLOCK_DELAY
+}
+
+# _testSwitchToUser1 [$1=action=[login|unlock]]
+_testSwitchToUser2() {
+    # This should be call when a user is logged in
+    echo "Test Switch to user 2"
+    # Ctrl + Alt + Del
+    keys 29:1 56:1 111:1 111:0 56:0 29:0
+    sleep $LOCK_DELAY
+    # save current time
+    local starttime=$(now)
+    # switch user button
+    leftclickat 1359 477
+    # check log
+    sleep $CHECK_LOG_DELAY
+    check_journal $starttime "Lock signal received for session id:" || { echo "Test Switch to user 1 failed at pressing switch user button!"; exit 1; }
+    sleep $LOCK_DELAY
+    # user 2 position
+    leftclickat 1816 977
+    # password input field
+    leftclickat 1149 635
+    # enter password
+    insert $PASSWORD2
+    # save current time
+    local starttime=$(now)
+    # login button
+    leftclickat 1295 635
+    # check log
+    sleep $CHECK_LOG_DELAY
+    if [ "$1" = "unlock" ]; then
+        check_journal $starttime "Unlock signal received for session id:" || { echo "Test Switch to user 1 failed at unlocking user 1!"; exit 1; }
+    else
+        check_journal $starttime "New session added: id=" || { echo "Test Switch to user 1 failed at loggin in user 1!"; exit 1; }
+    fi
+    echo "Test Switch to user 1 probably succeed. Check the display."
+    sleep $UNLOCK_DELAY
+}
+
+# Test login, logout, lock, unlock and switch user
+testLogin() {
+    cleanup
+    restartddm
+    _testLoginUser1
+    _testLogout
+    _testLoginUser1
+    _testLock
+    _testUnlockUser1
+    _testSwitchToUser2 login
+    _testSwitchToUser1 unlock
+    echo "Test Login passed!"
+    exit 0;
+}
+
+# Stress test, Open 20 terminals then kill them until Treeland crashes.
+testOpenTerminal() {
+    cleanup
+    restartddm
+    _testLoginUser1
+    INPUT_DELAY=0
+    while true; do
+        local starttime=$(now)
+        # (Ctrl + Alt + T) * 20
+        for i in {1..20}; do
+            keys 29:1 56:1 20:1 20:0 56:0 29:0
+        done
+        check_journal $starttime "treeland.service: Failed with result 'core-dump'." && { echo "Test Open Terminal failed, Treeland crashed!"; exit 1; }
+        pkill deepin-terminal || true
+    done
+}
+
+echoHelp() {
+    if grep -q "zh_CN" <<< "$LANG"; then
+        echo "用法: $0 [测试名称]"
+        echo ""
+        echo "使用 ydotool 自动化测试 Treeland。"
+        echo ""
+        echo "要求:"
+        echo "  - 以 root 身份运行"
+        echo "  - ydotool 已安装"
+        echo "  - 屏幕分辨率为 1920x1080"
+        echo ""
+        echo "可用环境变量:"
+        echo "  - INPUT_DELAY: 每个输入事件之间的延迟，默认为 0.3"
+        echo "  - LOCK_DELAY: 锁屏后的延迟，默认为 1"
+        echo "  - UNLOCK_DELAY: 解锁后的延迟，默认为 4"
+        echo "  - CHECK_LOG_DELAY: 检查日志前的延迟，默认为 0.5"
+        echo "  - USER1: 第一个用户的用户名（用户列表中倒数第二个用户）"
+        echo "  - PASSWORD1: 第一个用户的密码"
+        echo "  - USER2: 第二个用户的用户名（用户列表中最后一个用户）"
+        echo "  - PASSWORD2: 第二个用户的密码"
+        echo ""
+        echo "可用测试:"
+        echo "  - login: 测试登录、注销、锁屏、解锁和切换用户"
+        echo "  - open-terminal: 压力测试，打开20个终端然后杀掉它们直到 Treeland 崩溃。"
+    else
+        echo "Usage: $0 [test-name]"
+        echo ""
+        echo "Automate testing for Treeland using ydotool."
+        echo ""
+        echo "Requirements:"
+        echo "  - Run as root"
+        echo "  - ydotool installed"
+        echo "  - 1920x1080 screen resolution"
+        echo ""
+        echo "Available environment variables:"
+        echo "  - INPUT_DELAY: Delay between each input event, default to 0.3"
+        echo "  - LOCK_DELAY: Delay after locking the screen, default to 1"
+        echo "  - UNLOCK_DELAY: Delay after unlocking the screen, default to 4"
+        echo "  - CHECK_LOG_DELAY: Delay before checking the log, default to 0.5"
+        echo "  - USER1: Username of the first user (the second last user in the user list)"
+        echo "  - PASSWORD1: Password of the first user"
+        echo "  - USER2: Username of the second user (the last user in the user list)"
+        echo "  - PASSWORD2: Password of the second user"
+        echo ""
+        echo "Available tests:"
+        echo "  - login: Test login, logout, lock, unlock and switch user"
+        echo "  - open-terminal: Stress test, Open 20 terminals then kill them until Treeland crashes."
+    fi
+}
+
+if [ $# -ne 1 ] || [ $1 == "--help" ]; then
+    echoHelp
+    exit 1
+fi
+
+case $1 in
+    login)
+        testLogin
+        ;;
+    open-terminal)
+        testOpenTerminal
+        ;;
+    *)
+        echoHelp
+        exit 1
+        ;;
+esac
