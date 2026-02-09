@@ -36,6 +36,8 @@ The following is how to record desired mouse input event the developer herself, 
 
 ![Example measurement using PixelSnap](./pixelsnap.png)
 
+See also [the manpage of ydotool](https://github.com/ReimuNotMoe/ydotool/blob/master/manpage/ydotool.1.scd).
+
 ### Acknowledgements
 
 Thanks to [ydotool](https://github.com/ReimuNotMoe/ydotool), which
@@ -75,13 +77,15 @@ provides the critical infrastructure for the automation.
 以下是开发者本人录入鼠标输入事件的方法，仅供参考。
 
 1. 准备一台 Mac
-2. 安装 [UTM 虚拟机软件](https://mac.getutm.app/)并创建一个使用 Apple Virtualization 后端的 Linux 虚拟机。编辑虚拟机，在显示器设置中_禁用 Retina_
+2. 安装 [UTM 虚拟机软件](https://mac.getutm.app/)并创建一个使用 Apple Virtualization 后端的 Linux 虚拟机。编辑虚拟机，在显示器设置中 _禁用 Retina_
 3. 安装 deepin 操作系统和 Treeland 开发环境
 4. 启动虚拟机，将虚拟屏幕窗口的大小调整至 1920x1080 （或者其它你想录入的分辨率）
 5. 安装 [PixelSnap](https://pixelsnap.com/zh) （通过 [SetApp](https://setapp.com/apps/358?utm_medium=vendor_program&utm_source=PixelSnap) 订阅是一个比较优惠的渠道）
 6. 启动 Treeland ，使用 PixelSnap 测量并获取屏幕坐标信息
 
 ![PixelSnap 操作示例](./pixelsnap.png)
+
+另请参见 [ydotool 的手册页](https://github.com/ReimuNotMoe/ydotool/blob/master/manpage/ydotool.1.scd)。
 
 ### 致谢
 
